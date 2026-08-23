@@ -1,5 +1,5 @@
 import json
-from typing import Any
+from typing import Any, Optional
 from pathlib import Path
 
 from tokenizers import AddedToken, Tokenizer
@@ -7,10 +7,10 @@ from tokenizers import AddedToken, Tokenizer
 from fastembed.image.transform.operators import Compose
 
 
-def load_special_tokens(model_dir: Path) -> dict[str, Any]:
+def load_special_tokens(model_dir: Path) -> Optional[dict[str, Any]]:
     tokens_map_path = model_dir / "special_tokens_map.json"
     if not tokens_map_path.exists():
-        raise ValueError(f"Could not find special_tokens_map.json in {model_dir}")
+        return None
 
     with open(str(tokens_map_path)) as tokens_map_file:
         tokens_map = json.load(tokens_map_file)
@@ -18,10 +18,20 @@ def load_special_tokens(model_dir: Path) -> dict[str, Any]:
     return tokens_map
 
 
+def _special_tokens_from_tokenizer(tokenizer: Tokenizer) -> dict[str, int]:
+    return {
+        added_token.content: token_id
+        for token_id, added_token in tokenizer.get_added_tokens_decoder().items()
+        if added_token.special
+    }
+
+
 def load_tokenizer(model_dir: Path) -> tuple[Tokenizer, dict[str, int]]:
     config_path = model_dir / "config.json"
-    if not config_path.exists():
-        raise ValueError(f"Could not find config.json in {model_dir}")
+    config: dict[str, Any] = {}
+    if config_path.exists():
+        with open(str(config_path)) as config_file:
+            config = json.load(config_file)
 
     tokenizer_path = model_dir / "tokenizer.json"
     if not tokenizer_path.exists():
@@ -30,9 +40,6 @@ def load_tokenizer(model_dir: Path) -> tuple[Tokenizer, dict[str, int]]:
     tokenizer_config_path = model_dir / "tokenizer_config.json"
     if not tokenizer_config_path.exists():
         raise ValueError(f"Could not find tokenizer_config.json in {model_dir}")
-
-    with open(str(config_path)) as config_file:
-        config = json.load(config_file)
 
     with open(str(tokenizer_config_path)) as tokenizer_config_file:
         tokenizer_config = json.load(tokenizer_config_file)
@@ -51,24 +58,29 @@ def load_tokenizer(model_dir: Path) -> tuple[Tokenizer, dict[str, int]]:
     tokenizer = Tokenizer.from_file(str(tokenizer_path))
     tokenizer.enable_truncation(max_length=max_context)
     if not tokenizer.padding:
-        tokenizer.enable_padding(
-            pad_id=config.get("pad_token_id", 0), pad_token=tokenizer_config["pad_token"]
-        )
+        pad_token = tokenizer_config.get("pad_token")
+        pad_token_id = config.get("pad_token_id")
+        if pad_token_id is None:
+            pad_token_id = tokenizer.token_to_id(pad_token) if pad_token is not None else 0
+        tokenizer.enable_padding(pad_id=pad_token_id or 0, pad_token=pad_token or "")
 
-    for token in tokens_map.values():
-        if isinstance(token, str):
-            tokenizer.add_special_tokens([token])
-        elif isinstance(token, dict):
-            tokenizer.add_special_tokens([AddedToken(**token)])
+    if tokens_map is None:
+        special_token_to_id = _special_tokens_from_tokenizer(tokenizer)
+    else:
+        for token in tokens_map.values():
+            if isinstance(token, str):
+                tokenizer.add_special_tokens([token])
+            elif isinstance(token, dict):
+                tokenizer.add_special_tokens([AddedToken(**token)])
 
-    special_token_to_id: dict[str, int] = {}
+        special_token_to_id = {}
 
-    for token in tokens_map.values():
-        if isinstance(token, str):
-            special_token_to_id[token] = tokenizer.token_to_id(token)
-        elif isinstance(token, dict):
-            token_str = token.get("content", "")
-            special_token_to_id[token_str] = tokenizer.token_to_id(token_str)
+        for token in tokens_map.values():
+            if isinstance(token, str):
+                special_token_to_id[token] = tokenizer.token_to_id(token)
+            elif isinstance(token, dict):
+                token_str = token.get("content", "")
+                special_token_to_id[token_str] = tokenizer.token_to_id(token_str)
 
     return tokenizer, special_token_to_id
 
