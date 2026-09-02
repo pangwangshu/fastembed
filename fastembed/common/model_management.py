@@ -376,6 +376,29 @@ class ModelManagement(Generic[T]):
 
         return model_dir
 
+    @staticmethod
+    def _is_local_model_file(model_dir: Path, file: str) -> bool:
+        if Path(file).is_absolute():
+            return False
+
+        candidate = Path(os.path.abspath(model_dir / file))
+        try:
+            candidate.relative_to(model_dir)
+        except ValueError:
+            return False
+        return candidate.is_file()
+
+    @classmethod
+    def _get_valid_local_model_dir(cls, hf_source: str, required_files: list[str]) -> Path | None:
+        model_dir = Path(hf_source).expanduser()
+        if not model_dir.is_dir():
+            return None
+
+        local_root = Path(os.path.abspath(model_dir))
+        if all(cls._is_local_model_file(local_root, file) for file in required_files):
+            return local_root
+        return None
+
     @classmethod
     def download_model(cls, model: T, cache_dir: str, retries: int = 3, **kwargs: Any) -> Path:
         """
@@ -418,6 +441,10 @@ class ModelManagement(Generic[T]):
         extra_patterns.extend(model.additional_files)
 
         if hf_source:
+            local_model_dir = cls._get_valid_local_model_dir(hf_source, [model.model_file, *model.additional_files])
+            if local_model_dir is not None:
+                return local_model_dir
+
             try:
                 cache_kwargs = deepcopy(kwargs)
                 cache_kwargs["local_files_only"] = True

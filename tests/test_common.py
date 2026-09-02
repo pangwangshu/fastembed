@@ -8,6 +8,7 @@ from fastembed import (
     SparseTextEmbedding,
     TextEmbedding,
 )
+from fastembed.common.model_description import DenseModelDescription, ModelSource
 from fastembed.common.model_management import ModelManagement
 
 
@@ -69,6 +70,53 @@ def _run_download_with_mocks(tmp_path, extra_env, local_files_only=False, downlo
             **(download_kwargs or {}),
         )
         return mock_hf_api_cls, mock_hf_api_instance, mock_sd
+
+
+def test_local_model_dir_rejects_paths_outside_root(tmp_path):
+    """Local custom-model directories must keep every required file under the model root."""
+    model_dir = tmp_path / "safe-model"
+    model_dir.mkdir()
+    (model_dir / "onnx").mkdir()
+    (model_dir / "onnx" / "model.onnx").write_bytes(b"onnx")
+
+    valid_model = DenseModelDescription(
+        model="demo-model",
+        sources=ModelSource(hf=str(model_dir)),
+        model_file="onnx/model.onnx",
+        description="",
+        license="",
+        size_in_GB=0.0,
+        dim=1,
+    )
+    assert ModelManagement._get_valid_local_model_dir(
+        str(model_dir), [valid_model.model_file, *valid_model.additional_files]
+    ) == model_dir
+
+    traversal_model = DenseModelDescription(
+        model="demo-model-traversal",
+        sources=ModelSource(hf=str(model_dir)),
+        model_file="../model.onnx",
+        description="",
+        license="",
+        size_in_GB=0.0,
+        dim=1,
+    )
+    assert ModelManagement._get_valid_local_model_dir(
+        str(model_dir), [traversal_model.model_file, *traversal_model.additional_files]
+    ) is None
+
+    absolute_model = DenseModelDescription(
+        model="demo-model-absolute",
+        sources=ModelSource(hf=str(model_dir)),
+        model_file=str(model_dir / "onnx" / "model.onnx"),
+        description="",
+        license="",
+        size_in_GB=0.0,
+        dim=1,
+    )
+    assert ModelManagement._get_valid_local_model_dir(
+        str(model_dir), [absolute_model.model_file, *absolute_model.additional_files]
+    ) is None
 
 
 def test_hf_endpoint_forwarded_to_hub_calls(tmp_path):
